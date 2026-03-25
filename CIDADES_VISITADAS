@@ -1,7 +1,7 @@
 /*************************************************
  * CONFIGURAÇÕES
  *************************************************/
-const CONFIG = {
+var CONFIG = {
   NOME_PLANILHA: 'RELATORIOS_DE_VIAGENS',
   NOME_ABA: '', // deixe vazio para usar a primeira aba
   CABECALHO_PROCESSO: 'Número processo',
@@ -15,16 +15,18 @@ const CONFIG = {
 };
 
 /*************************************************
- * FUNÇÃO PRINCIPAL
+ * FUNÇÃO PRINCIPAL (ORQUESTRADORA)
  * - Lê a planilha RELATORIOS_DE_VIAGENS
  * - Ordena pela coluna "Número processo"
  * - Monta a lista de cidades únicas
+ * - Chama funções de DATAS.gs para obter primeira/última data
+ * - Chama funções de TRECHO_VIAJADO.gs para montar variável {1}
  * - Cria um Google Docs a partir do modelo
- * - Substitui {CIDADES_VISITADAS}
+ * - Substitui {CIDADES_VISITADAS}, {PRIMEIRA_DATA}, {ULTIMA_DATA} e {1}
  *************************************************/
 function gerarRelatorioComCidades() {
-  const ss = abrirPlanilhaPorNome_(CONFIG.NOME_PLANILHA);
-  const sheet = CONFIG.NOME_ABA
+  var ss = abrirPlanilhaPorNome_(CONFIG.NOME_PLANILHA);
+  var sheet = CONFIG.NOME_ABA
     ? ss.getSheetByName(CONFIG.NOME_ABA)
     : ss.getSheets()[0];
 
@@ -32,34 +34,34 @@ function gerarRelatorioComCidades() {
     throw new Error('Não foi possível localizar a aba de dados.');
   }
 
-  const dados = sheet.getDataRange().getValues();
+  var dados = sheet.getDataRange().getValues();
 
   if (dados.length < 2) {
     throw new Error('A planilha não possui dados suficientes.');
   }
 
-  const cabecalhos = dados[0];
+  var cabecalhos = dados[0];
 
-  const idxProcesso = encontrarIndiceColuna_(cabecalhos, [CONFIG.CABECALHO_PROCESSO]);
+  var idxProcesso = encontrarIndiceColuna_(cabecalhos, [CONFIG.CABECALHO_PROCESSO]);
   if (idxProcesso === -1) {
     throw new Error('Coluna "Número processo" não encontrada.');
   }
 
-  const idxCidade = encontrarIndiceColuna_(cabecalhos, CONFIG.CABECALHOS_CIDADE_POSSIVEIS);
+  var idxCidade = encontrarIndiceColuna_(cabecalhos, CONFIG.CABECALHOS_CIDADE_POSSIVEIS);
   if (idxCidade === -1) {
     throw new Error(
       'Nenhuma coluna de cidade foi encontrada. Verifique se o cabeçalho é "Cidade", "Município", "Municipio" ou "Local".'
     );
   }
 
-  const linhas = dados.slice(1);
+  var linhas = dados.slice(1);
 
   /*************************************************
    * 1) ORDENAR AS LINHAS POR NÚMERO PROCESSO
    *************************************************/
-  linhas.sort((a, b) => {
-    const numA = extrairNumero_(a[idxProcesso]);
-    const numB = extrairNumero_(b[idxProcesso]);
+  linhas.sort(function(a, b) {
+    var numA = extrairNumero_(a[idxProcesso]);
+    var numB = extrairNumero_(b[idxProcesso]);
     return numA - numB;
   });
 
@@ -69,56 +71,76 @@ function gerarRelatorioComCidades() {
   /*************************************************
    * 2) GERAR LISTA DE CIDADES ÚNICAS
    *************************************************/
-  const cidadesUnicas = [];
-  const cidadesJaVistas = new Set();
+  var cidadesUnicas = [];
+  var cidadesJaVistas = {};
 
-  linhas.forEach(linha => {
-    const cidadeBruta = linha[idxCidade];
-    if (cidadeBruta === '' || cidadeBruta === null || cidadeBruta === undefined) return;
+  for (var i = 0; i < linhas.length; i++) {
+    var linha = linhas[i];
+    var cidadeBruta = linha[idxCidade];
 
-    const cidadeFormatada = formatarCidade_(cidadeBruta);
-    const chaveCidade = normalizarChave_(cidadeFormatada);
+    if (cidadeBruta === '' || cidadeBruta === null || cidadeBruta === undefined) {
+      continue;
+    }
 
-    if (!cidadesJaVistas.has(chaveCidade)) {
-      cidadesJaVistas.add(chaveCidade);
+    var cidadeFormatada = formatarCidade_(cidadeBruta);
+    var chaveCidade = normalizarChave_(cidadeFormatada);
+
+    if (!cidadesJaVistas[chaveCidade]) {
+      cidadesJaVistas[chaveCidade] = true;
       cidadesUnicas.push(cidadeFormatada);
     }
-  });
+  }
 
-  const listaCidades = cidadesUnicas.join('; ');
+  var listaCidades = cidadesUnicas.join('; ');
   Logger.log('Cidades únicas: ' + listaCidades);
 
   /*************************************************
-   * 3) CRIAR CÓPIA DO MODELO
+   * 3) OBTER INTERVALO DE DATAS (arquivo DATAS.gs)
    *************************************************/
-  const templateId = limparIdGoogle_(CONFIG.TEMPLATE_DOC_ID);
-  const templateFile = DriveApp.getFileById(templateId);
+  var intervaloDatas = obterIntervaloDatas_(cabecalhos, linhas);
 
-  const dataHora = Utilities.formatDate(
+  /*************************************************
+   * 4) MONTAR TRECHO VIAJADO POR DIA (TRECHO_VIAJADO.gs)
+   *************************************************/
+  var trechoViajado = montarTrechoViajadoComDatas_(cabecalhos, linhas);
+
+  /*************************************************
+   * 5) CRIAR CÓPIA DO MODELO
+   *************************************************/
+  var templateId = limparIdGoogle_(CONFIG.TEMPLATE_DOC_ID);
+  var templateFile = DriveApp.getFileById(templateId);
+
+  var dataHora = Utilities.formatDate(
     new Date(),
     Session.getScriptTimeZone(),
     'yyyy-MM-dd HH:mm:ss'
   );
 
-  const nomeNovoDocumento = CONFIG.NOME_DOCUMENTO_GERADO + ' - ' + dataHora;
-  const copia = templateFile.makeCopy(nomeNovoDocumento);
+  var nomeNovoDocumento = CONFIG.NOME_DOCUMENTO_GERADO + ' - ' + dataHora;
+  var copia = templateFile.makeCopy(nomeNovoDocumento);
 
   /*************************************************
-   * 4) ABRIR A CÓPIA E SUBSTITUIR A VARIÁVEL
+   * 6) ABRIR A CÓPIA E SUBSTITUIR VARIÁVEIS
    *************************************************/
-  const doc = DocumentApp.openById(copia.getId());
-  const body = doc.getBody();
+  var doc = DocumentApp.openById(copia.getId());
+  var body = doc.getBody();
 
   body.replaceText('\\{CIDADES_VISITADAS\\}', listaCidades);
+  body.replaceText('\\{PRIMEIRA_DATA\\}', intervaloDatas.primeiraData);
+  body.replaceText('\\{ULTIMA_DATA\\}', intervaloDatas.ultimaData);
+  body.replaceText('\\{1\\}', trechoViajado);
 
   doc.saveAndClose();
 
-  const urlDocumento = 'https://docs.google.com/document/d/' + copia.getId() + '/edit';
+  var urlDocumento = 'https://docs.google.com/document/d/' + copia.getId() + '/edit';
 
   Logger.log('Documento gerado com sucesso: ' + urlDocumento);
 
   return {
     cidades: listaCidades,
+    primeiraData: intervaloDatas.primeiraData,
+    ultimaData: intervaloDatas.ultimaData,
+    trechoViajado: trechoViajado,
     docId: copia.getId(),
     docUrl: urlDocumento
   };
@@ -128,13 +150,13 @@ function gerarRelatorioComCidades() {
  * ABRIR PLANILHA PELO NOME DO ARQUIVO
  *************************************************/
 function abrirPlanilhaPorNome_(nomeArquivo) {
-  const arquivos = DriveApp.getFilesByName(nomeArquivo);
+  var arquivos = DriveApp.getFilesByName(nomeArquivo);
 
   if (!arquivos.hasNext()) {
     throw new Error('Arquivo Google Planilhas não encontrado com o nome: ' + nomeArquivo);
   }
 
-  const arquivo = arquivos.next();
+  var arquivo = arquivos.next();
   return SpreadsheetApp.openById(arquivo.getId());
 }
 
@@ -142,11 +164,14 @@ function abrirPlanilhaPorNome_(nomeArquivo) {
  * ENCONTRAR ÍNDICE DA COLUNA
  *************************************************/
 function encontrarIndiceColuna_(cabecalhos, nomesPossiveis) {
-  const cabecalhosNormalizados = cabecalhos.map(h => normalizarCabecalho_(h));
+  var cabecalhosNormalizados = [];
+  for (var i = 0; i < cabecalhos.length; i++) {
+    cabecalhosNormalizados.push(normalizarCabecalho_(cabecalhos[i]));
+  }
 
-  for (let i = 0; i < nomesPossiveis.length; i++) {
-    const nomeNormalizado = normalizarCabecalho_(nomesPossiveis[i]);
-    const idx = cabecalhosNormalizados.indexOf(nomeNormalizado);
+  for (var j = 0; j < nomesPossiveis.length; j++) {
+    var nomeNormalizado = normalizarCabecalho_(nomesPossiveis[j]);
+    var idx = cabecalhosNormalizados.indexOf(nomeNormalizado);
     if (idx !== -1) return idx;
   }
 
@@ -169,14 +194,14 @@ function normalizarCabecalho_(texto) {
  * Ex.: "123", "000123", "Proc. 123/2025"
  *************************************************/
 function extrairNumero_(valor) {
-  const texto = String(valor || '').trim();
+  var texto = String(valor || '').trim();
 
   if (!texto) return Number.MAX_SAFE_INTEGER;
 
-  const direto = Number(texto);
+  var direto = Number(texto);
   if (!isNaN(direto)) return direto;
 
-  const match = texto.match(/\d+/);
+  var match = texto.match(/\d+/);
   if (match) return Number(match[0]);
 
   return Number.MAX_SAFE_INTEGER;
@@ -191,7 +216,9 @@ function formatarCidade_(cidade) {
     .trim()
     .toLowerCase()
     .split(/\s+/)
-    .map(palavra => palavra.charAt(0).toUpperCase() + palavra.slice(1))
+    .map(function(palavra) {
+      return palavra.charAt(0).toUpperCase() + palavra.slice(1);
+    })
     .join(' ');
 }
 
@@ -211,7 +238,7 @@ function normalizarChave_(texto) {
  * Aceita ID puro, URL completa, ou texto com /edit
  *************************************************/
 function limparIdGoogle_(texto) {
-  const valor = String(texto || '').trim();
-  const match = valor.match(/[-\w]{25,}/);
+  var valor = String(texto || '').trim();
+  var match = valor.match(/[-\w]{25,}/);
   return match ? match[0] : valor;
 }
