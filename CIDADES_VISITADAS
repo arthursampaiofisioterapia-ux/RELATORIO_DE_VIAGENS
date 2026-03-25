@@ -1,0 +1,217 @@
+/*************************************************
+ * CONFIGURAÇÕES
+ *************************************************/
+const CONFIG = {
+  NOME_PLANILHA: 'RELATORIOS_DE_VIAGENS',
+  NOME_ABA: '', // deixe vazio para usar a primeira aba
+  CABECALHO_PROCESSO: 'Número processo',
+  CABECALHOS_CIDADE_POSSIVEIS: ['Cidade', 'Município', 'Municipio', 'Local'],
+
+  // ID do modelo Google Docs
+  TEMPLATE_DOC_ID: '1WeU9n6b132LQ2_046npUfjYH7odxVgVSQrz-V0rNzK4',
+
+  // Nome base do documento gerado
+  NOME_DOCUMENTO_GERADO: 'RELATORIO_DE_VIAGENS - GERADO'
+};
+
+/*************************************************
+ * FUNÇÃO PRINCIPAL
+ * - Lê a planilha RELATORIOS_DE_VIAGENS
+ * - Ordena pela coluna "Número processo"
+ * - Monta a lista de cidades únicas
+ * - Cria um Google Docs a partir do modelo
+ * - Substitui {CIDADES_VISITADAS}
+ *************************************************/
+function gerarRelatorioComCidades() {
+  const ss = abrirPlanilhaPorNome_(CONFIG.NOME_PLANILHA);
+  const sheet = CONFIG.NOME_ABA
+    ? ss.getSheetByName(CONFIG.NOME_ABA)
+    : ss.getSheets()[0];
+
+  if (!sheet) {
+    throw new Error('Não foi possível localizar a aba de dados.');
+  }
+
+  const dados = sheet.getDataRange().getValues();
+
+  if (dados.length < 2) {
+    throw new Error('A planilha não possui dados suficientes.');
+  }
+
+  const cabecalhos = dados[0];
+
+  const idxProcesso = encontrarIndiceColuna_(cabecalhos, [CONFIG.CABECALHO_PROCESSO]);
+  if (idxProcesso === -1) {
+    throw new Error('Coluna "Número processo" não encontrada.');
+  }
+
+  const idxCidade = encontrarIndiceColuna_(cabecalhos, CONFIG.CABECALHOS_CIDADE_POSSIVEIS);
+  if (idxCidade === -1) {
+    throw new Error(
+      'Nenhuma coluna de cidade foi encontrada. Verifique se o cabeçalho é "Cidade", "Município", "Municipio" ou "Local".'
+    );
+  }
+
+  const linhas = dados.slice(1);
+
+  /*************************************************
+   * 1) ORDENAR AS LINHAS POR NÚMERO PROCESSO
+   *************************************************/
+  linhas.sort((a, b) => {
+    const numA = extrairNumero_(a[idxProcesso]);
+    const numB = extrairNumero_(b[idxProcesso]);
+    return numA - numB;
+  });
+
+  // Reescreve a planilha já ordenada
+  sheet.getRange(2, 1, linhas.length, cabecalhos.length).setValues(linhas);
+
+  /*************************************************
+   * 2) GERAR LISTA DE CIDADES ÚNICAS
+   *************************************************/
+  const cidadesUnicas = [];
+  const cidadesJaVistas = new Set();
+
+  linhas.forEach(linha => {
+    const cidadeBruta = linha[idxCidade];
+    if (cidadeBruta === '' || cidadeBruta === null || cidadeBruta === undefined) return;
+
+    const cidadeFormatada = formatarCidade_(cidadeBruta);
+    const chaveCidade = normalizarChave_(cidadeFormatada);
+
+    if (!cidadesJaVistas.has(chaveCidade)) {
+      cidadesJaVistas.add(chaveCidade);
+      cidadesUnicas.push(cidadeFormatada);
+    }
+  });
+
+  const listaCidades = cidadesUnicas.join('; ');
+  Logger.log('Cidades únicas: ' + listaCidades);
+
+  /*************************************************
+   * 3) CRIAR CÓPIA DO MODELO
+   *************************************************/
+  const templateId = limparIdGoogle_(CONFIG.TEMPLATE_DOC_ID);
+  const templateFile = DriveApp.getFileById(templateId);
+
+  const dataHora = Utilities.formatDate(
+    new Date(),
+    Session.getScriptTimeZone(),
+    'yyyy-MM-dd HH:mm:ss'
+  );
+
+  const nomeNovoDocumento = CONFIG.NOME_DOCUMENTO_GERADO + ' - ' + dataHora;
+  const copia = templateFile.makeCopy(nomeNovoDocumento);
+
+  /*************************************************
+   * 4) ABRIR A CÓPIA E SUBSTITUIR A VARIÁVEL
+   *************************************************/
+  const doc = DocumentApp.openById(copia.getId());
+  const body = doc.getBody();
+
+  body.replaceText('\\{CIDADES_VISITADAS\\}', listaCidades);
+
+  doc.saveAndClose();
+
+  const urlDocumento = 'https://docs.google.com/document/d/' + copia.getId() + '/edit';
+
+  Logger.log('Documento gerado com sucesso: ' + urlDocumento);
+
+  return {
+    cidades: listaCidades,
+    docId: copia.getId(),
+    docUrl: urlDocumento
+  };
+}
+
+/*************************************************
+ * ABRIR PLANILHA PELO NOME DO ARQUIVO
+ *************************************************/
+function abrirPlanilhaPorNome_(nomeArquivo) {
+  const arquivos = DriveApp.getFilesByName(nomeArquivo);
+
+  if (!arquivos.hasNext()) {
+    throw new Error('Arquivo Google Planilhas não encontrado com o nome: ' + nomeArquivo);
+  }
+
+  const arquivo = arquivos.next();
+  return SpreadsheetApp.openById(arquivo.getId());
+}
+
+/*************************************************
+ * ENCONTRAR ÍNDICE DA COLUNA
+ *************************************************/
+function encontrarIndiceColuna_(cabecalhos, nomesPossiveis) {
+  const cabecalhosNormalizados = cabecalhos.map(h => normalizarCabecalho_(h));
+
+  for (let i = 0; i < nomesPossiveis.length; i++) {
+    const nomeNormalizado = normalizarCabecalho_(nomesPossiveis[i]);
+    const idx = cabecalhosNormalizados.indexOf(nomeNormalizado);
+    if (idx !== -1) return idx;
+  }
+
+  return -1;
+}
+
+/*************************************************
+ * NORMALIZAR CABEÇALHO
+ *************************************************/
+function normalizarCabecalho_(texto) {
+  return String(texto || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+/*************************************************
+ * EXTRAIR NÚMERO PARA ORDENAÇÃO
+ * Ex.: "123", "000123", "Proc. 123/2025"
+ *************************************************/
+function extrairNumero_(valor) {
+  const texto = String(valor || '').trim();
+
+  if (!texto) return Number.MAX_SAFE_INTEGER;
+
+  const direto = Number(texto);
+  if (!isNaN(direto)) return direto;
+
+  const match = texto.match(/\d+/);
+  if (match) return Number(match[0]);
+
+  return Number.MAX_SAFE_INTEGER;
+}
+
+/*************************************************
+ * FORMATAR CIDADE
+ * Ex.: "belo horizonte" -> "Belo Horizonte"
+ *************************************************/
+function formatarCidade_(cidade) {
+  return String(cidade || '')
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .map(palavra => palavra.charAt(0).toUpperCase() + palavra.slice(1))
+    .join(' ');
+}
+
+/*************************************************
+ * NORMALIZAR CHAVE PARA REMOVER REPETIÇÕES
+ *************************************************/
+function normalizarChave_(texto) {
+  return String(texto || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+/*************************************************
+ * LIMPAR ID GOOGLE
+ * Aceita ID puro, URL completa, ou texto com /edit
+ *************************************************/
+function limparIdGoogle_(texto) {
+  const valor = String(texto || '').trim();
+  const match = valor.match(/[-\w]{25,}/);
+  return match ? match[0] : valor;
+}
