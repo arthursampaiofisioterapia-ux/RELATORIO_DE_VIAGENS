@@ -21,8 +21,9 @@ var CONFIG = {
  * - Monta a lista de cidades únicas
  * - Chama funções de DATAS.gs para obter primeira/última data
  * - Chama funções de TRECHO_VIAJADO.gs para montar variável {1}
+ * - Chama funções de DESCRICAO_ATIVIDADES.gs para montar variável {2}
  * - Cria um Google Docs a partir do modelo
- * - Substitui {CIDADES_VISITADAS}, {PRIMEIRA_DATA}, {ULTIMA_DATA} e {1}
+ * - Substitui {CIDADES_VISITADAS}, {PRIMEIRA_DATA}, {ULTIMA_DATA}, {1} e {2}
  *************************************************/
 function gerarRelatorioComCidades() {
   var ss = abrirPlanilhaPorNome_(CONFIG.NOME_PLANILHA);
@@ -105,7 +106,12 @@ function gerarRelatorioComCidades() {
   var trechoViajado = montarTrechoViajadoComDatas_(cabecalhos, linhas);
 
   /*************************************************
-   * 5) CRIAR CÓPIA DO MODELO
+   * 5) MONTAR DESCRIÇÃO DAS ATIVIDADES ({2})
+   *************************************************/
+  var descricaoAtividades = montarDescricaoAtividades_(cabecalhos, linhas);
+
+  /*************************************************
+   * 6) CRIAR CÓPIA DO MODELO
    *************************************************/
   var templateId = limparIdGoogle_(CONFIG.TEMPLATE_DOC_ID);
   var templateFile = DriveApp.getFileById(templateId);
@@ -120,7 +126,7 @@ function gerarRelatorioComCidades() {
   var copia = templateFile.makeCopy(nomeNovoDocumento);
 
   /*************************************************
-   * 6) ABRIR A CÓPIA E SUBSTITUIR VARIÁVEIS
+   * 7) ABRIR A CÓPIA E SUBSTITUIR VARIÁVEIS
    *************************************************/
   var doc = DocumentApp.openById(copia.getId());
   var body = doc.getBody();
@@ -129,6 +135,10 @@ function gerarRelatorioComCidades() {
   body.replaceText('\\{PRIMEIRA_DATA\\}', intervaloDatas.primeiraData);
   body.replaceText('\\{ULTIMA_DATA\\}', intervaloDatas.ultimaData);
   body.replaceText('\\{1\\}', trechoViajado);
+  body.replaceText('\\{2\\}', descricaoAtividades);
+
+  // deixa os títulos "Dia ...:" em negrito no bloco de atividades
+  aplicarNegritoTitulosDescricao_(body);
 
   doc.saveAndClose();
 
@@ -141,6 +151,7 @@ function gerarRelatorioComCidades() {
     primeiraData: intervaloDatas.primeiraData,
     ultimaData: intervaloDatas.ultimaData,
     trechoViajado: trechoViajado,
+    descricaoAtividades: descricaoAtividades,
     docId: copia.getId(),
     docUrl: urlDocumento
   };
