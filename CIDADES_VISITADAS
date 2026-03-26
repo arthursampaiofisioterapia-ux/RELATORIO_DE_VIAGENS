@@ -2,13 +2,15 @@
  * CONFIGURAÇÕES
  *************************************************/
 var CONFIG = {
-  NOME_PLANILHA: 'RELATORIOS_DE_VIAGENS',
+  // Planilha de origem (Google Sheets)
+  PLANILHA_ID: '1pEPBzbk2rAUhC9Xd5jO23HCdshwEA9mxk0thDXjycEQ',
+  NOME_PLANILHA: 'RELATORIOS_DE_VIAGENS', // fallback opcional por nome
   NOME_ABA: '', // deixe vazio para usar a primeira aba
   CABECALHO_PROCESSO: 'Número processo',
   CABECALHOS_CIDADE_POSSIVEIS: ['Cidade', 'Município', 'Municipio', 'Local'],
 
   // ID do modelo Google Docs
-  TEMPLATE_DOC_ID: '1WeU9n6b132LQ2_046npUfjYH7odxVgVSQrz-V0rNzK4',
+  TEMPLATE_DOC_ID: '1RGb_tHHwisvoQx6RocH6WFL2RaNI0mkdCKTmtiGOHNU',
 
   // Nome base do documento gerado
   NOME_DOCUMENTO_GERADO: 'RELATORIO_DE_VIAGENS - GERADO'
@@ -27,7 +29,7 @@ var CONFIG = {
  * - Substitui {CIDADES_VISITADAS}, {PRIMEIRA_DATA}, {ULTIMA_DATA}, {1}, {2} e {3}
  *************************************************/
 function gerarRelatorioComCidades() {
-  var ss = abrirPlanilhaPorNome_(CONFIG.NOME_PLANILHA);
+  var ss = abrirPlanilhaPorReferencia_(CONFIG.PLANILHA_ID, CONFIG.NOME_PLANILHA);
   var sheet = CONFIG.NOME_ABA
     ? ss.getSheetByName(CONFIG.NOME_ABA)
     : ss.getSheets()[0];
@@ -168,11 +170,19 @@ function gerarRelatorioComCidades() {
 /*************************************************
  * ABRIR PLANILHA PELO NOME DO ARQUIVO
  *************************************************/
-function abrirPlanilhaPorNome_(nomeArquivo) {
-  var arquivos = DriveApp.getFilesByName(nomeArquivo);
+function abrirPlanilhaPorReferencia_(planilhaId, nomeArquivoFallback) {
+  var idLimpo = limparIdGoogle_(planilhaId);
+
+  if (idLimpo) {
+    return SpreadsheetApp.openById(idLimpo);
+  }
+
+  var arquivos = DriveApp.getFilesByName(nomeArquivoFallback);
 
   if (!arquivos.hasNext()) {
-    throw new Error('Arquivo Google Planilhas não encontrado com o nome: ' + nomeArquivo);
+    throw new Error(
+      'Arquivo Google Planilhas não encontrado. Verifique PLANILHA_ID ou o nome: ' + nomeArquivoFallback
+    );
   }
 
   var arquivo = arquivos.next();
